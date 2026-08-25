@@ -52,6 +52,7 @@ class DatabaseHelper {
         codigo_filtro TEXT NOT NULL,
         descricao_filtro TEXT,
         horas_trocadas REAL NOT NULL,
+        proxima_troca REAL,
         data_troca TEXT NOT NULL,
         observacao TEXT,
         FOREIGN KEY (compartimento_id) REFERENCES compartimentos(id) ON DELETE CASCADE

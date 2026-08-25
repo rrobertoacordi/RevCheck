@@ -4,6 +4,8 @@ import '../database/database_helper.dart';
 import '../models/equipamento.dart';
 import 'equipamento_detalhe_screen.dart';
 
+import 'package:revchek/screen_editor.dart';
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -107,7 +109,22 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('RevCheck - Maquinários')),
+      appBar: AppBar(
+        title: const Text('RevCheck - Maquinários'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.palette),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ConfiguracoesScreen(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: _equipamentos.isEmpty
           ? const Center(child: Text('Nenhum equipamento cadastrado.'))
           : ListView.builder(

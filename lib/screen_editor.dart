@@ -49,7 +49,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                 spacing: 12,
                 runSpacing: 12,
                 children: coresDisponiveis.map((cor) {
-                  final isSelected = corAtual.value == cor.value;
+                  final isSelected = corAtual.toARGB32() == cor.toARGB32();
                   return GestureDetector(
                     onTap: () => AppTheme.mudarCor(cor),
                     child: CircleAvatar(

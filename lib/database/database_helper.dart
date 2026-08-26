@@ -1,6 +1,8 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
+import '../models/equipamento.dart';
+
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
@@ -9,7 +11,7 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('revchek.db');
+    _database = await _initDB('revcheck.db');
     return _database!;
   }
 
@@ -17,24 +19,40 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path,
+      version: 2, // Incrementado para recriar/atualizar a estrutura
+      onCreate: _createDB,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS lembretes (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              equipamento_id INTEGER NOT NULL,
+              data_hora TEXT NOT NULL,
+              observacao TEXT,
+              FOREIGN KEY (equipamento_id) REFERENCES equipamentos(id) ON DELETE CASCADE
+            )
+          ''');
+        }
+      },
+    );
   }
 
-  Future _createDB(Database db, int version) async {
-    await db.execute('PRAGMA foreign_keys = ON');
-
-    // Tabela de Equipamentos (Maquinários)
+  Future<void> _createDB(Database db, int version) async {
+    // 1. Tabela de Equipamentos
     await db.execute('''
       CREATE TABLE equipamentos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo TEXT NOT NULL,
         nome TEXT NOT NULL,
-        codigo TEXT UNIQUE NOT NULL,
-        modelo TEXT,
-        horometro_atual REAL DEFAULT 0
+        horometro_atual REAL NOT NULL,
+        lembrete_data TEXT,
+        lembrete_obs TEXT
       )
     ''');
 
-    // Tabela de Compartimentos
+    // 2. Tabela de Compartimentos
     await db.execute('''
       CREATE TABLE compartimentos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +62,7 @@ class DatabaseHelper {
       )
     ''');
 
-    // Tabela de Trocas de Filtro
+    // 3. Tabela de Trocas de Filtro
     await db.execute('''
       CREATE TABLE trocas_filtro (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,16 +76,29 @@ class DatabaseHelper {
         FOREIGN KEY (compartimento_id) REFERENCES compartimentos(id) ON DELETE CASCADE
       )
     ''');
+
+    // 4. Tabela de Lembretes
+    await db.execute('''
+      CREATE TABLE lembretes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        equipamento_id INTEGER NOT NULL,
+        data_hora TEXT NOT NULL,
+        observacao TEXT,
+        FOREIGN KEY (equipamento_id) REFERENCES equipamentos(id) ON DELETE CASCADE
+      )
+    ''');
   }
 
-  Future<int> insertEquipamento(Map<String, dynamic> row) async {
+  // --- MÉTODOS DE EQUIPAMENTOS ---
+
+  Future<int> insertEquipamento(Equipamento equipamento) async {
     final db = await instance.database;
-    return await db.insert('equipamentos', row);
+    return await db.insert('equipamentos', equipamento.toMap());
   }
 
   Future<List<Map<String, dynamic>>> getEquipamentos() async {
     final db = await instance.database;
-    return await db.query('equipamentos', orderBy: 'nome ASC');
+    return await db.query('equipamentos', orderBy: 'id DESC');
   }
 
   Future<int> deleteEquipamento(int id) async {
@@ -75,15 +106,13 @@ class DatabaseHelper {
     return await db.delete('equipamentos', where: 'id = ?', whereArgs: [id]);
   }
 
-  // --- COMPARTIMENTOS E FILTROS ---
+  // --- MÉTODOS DE COMPARTIMENTOS ---
 
-  // Inserir Compartimento/Filtro
   Future<int> insertCompartimento(Map<String, dynamic> row) async {
     final db = await instance.database;
     return await db.insert('compartimentos', row);
   }
 
-  // Buscar todos os compartimentos de um equipamento específico
   Future<List<Map<String, dynamic>>> getCompartimentosPorEquipamento(
     int equipamentoId,
   ) async {
@@ -92,17 +121,21 @@ class DatabaseHelper {
       'compartimentos',
       where: 'equipamento_id = ?',
       whereArgs: [equipamentoId],
-      orderBy: 'id DESC',
     );
   }
 
-  // Inserir registro de troca/instalação de filtro
+  Future<int> deleteCompartimento(int id) async {
+    final db = await instance.database;
+    return await db.delete('compartimentos', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- MÉTODOS DE TROCAS DE FILTRO ---
+
   Future<int> insertTrocaFiltro(Map<String, dynamic> row) async {
     final db = await instance.database;
     return await db.insert('trocas_filtro', row);
   }
 
-  // Buscar última troca/instalação de um compartimento
   Future<List<Map<String, dynamic>>> getTrocasPorCompartimento(
     int compartimentoId,
   ) async {
@@ -115,9 +148,40 @@ class DatabaseHelper {
     );
   }
 
-  // Deletar um compartimento/filtro
-  Future<int> deleteCompartimento(int id) async {
+  // --- MÉTODOS DE LEMBRETES ---
+
+  Future<int> insertLembrete(
+    int equipamentoId,
+    String dataIso,
+    String obs,
+  ) async {
     final db = await instance.database;
-    return await db.delete('compartimentos', where: 'id = ?', whereArgs: [id]);
+    return await db.insert('lembretes', {
+      'equipamento_id': equipamentoId,
+      'data_hora': dataIso,
+      'observacao': obs,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getLembretesPorEquipamento(
+    int equipamentoId,
+  ) async {
+    final db = await instance.database;
+    return await db.query(
+      'lembretes',
+      where: 'equipamento_id = ?',
+      whereArgs: [equipamentoId],
+      orderBy: 'data_hora ASC',
+    );
+  }
+
+  Future<int> deleteLembrete(int id) async {
+    final db = await instance.database;
+    return await db.delete('lembretes', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> close() async {
+    final db = await instance.database;
+    db.close();
   }
 }

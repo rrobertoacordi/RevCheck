@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
 import '../models/equipamento.dart';
+import '../services/notification_service.dart';
 
 class EquipamentoDetalheScreen extends StatefulWidget {
   final Equipamento equipamento;
@@ -15,11 +16,28 @@ class EquipamentoDetalheScreen extends StatefulWidget {
 
 class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
   List<Map<String, dynamic>> _compartimentos = [];
+  List<Map<String, dynamic>> _lembretes = [];
 
   @override
   void initState() {
     super.initState();
-    _carregarCompartimentos();
+    _carregarDados();
+  }
+
+  Future<void> _carregarDados() async {
+    await _carregarCompartimentos();
+    await _carregarLembretes();
+  }
+
+  Future<void> _carregarLembretes() async {
+    if (widget.equipamento.id == null) return;
+    final lista = await DatabaseHelper.instance.getLembretesPorEquipamento(
+      widget.equipamento.id!,
+    );
+    if (!mounted) return;
+    setState(() {
+      _lembretes = lista;
+    });
   }
 
   Future<void> _carregarCompartimentos() async {
@@ -40,12 +58,109 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
       listaCompleta.add(item);
     }
 
+    if (!mounted) return;
     setState(() {
       _compartimentos = listaCompleta;
     });
   }
 
-  // Método para confirmar e apagar o equipamento
+  // Agendar múltiplos lembretes
+  Future<void> _agendarLembreteRevisao() async {
+    final DateTime agora = DateTime.now();
+
+    final DateTime? dataSelecionada = await showDatePicker(
+      context: context,
+      initialDate: agora.add(const Duration(days: 1)),
+      firstDate: agora,
+      lastDate: agora.add(const Duration(days: 365 * 5)),
+      helpText: 'SELECIONE A DATA DA REVISÃO',
+      locale: const Locale('pt', 'BR'),
+    );
+
+    if (dataSelecionada == null) return;
+
+    final TimeOfDay? horaSelecionada = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 8, minute: 0),
+      helpText: 'SELECIONE A HORA DO LEMBRETE',
+    );
+
+    if (horaSelecionada == null) return;
+
+    final obsController = TextEditingController();
+    final bool? confirmouObs = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Observação do Lembrete'),
+        content: TextField(
+          controller: obsController,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: 'Ex: Troca de óleo do motor e filtro Donaldson',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Agendar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmouObs != true) return;
+
+    final DateTime dataHoraFinal = DateTime(
+      dataSelecionada.year,
+      dataSelecionada.month,
+      dataSelecionada.day,
+      horaSelecionada.hour,
+      horaSelecionada.minute,
+    );
+
+    // Salva no banco e pega o ID único do lembrete gerado
+    final lembreteId = await DatabaseHelper.instance.insertLembrete(
+      widget.equipamento.id!,
+      dataHoraFinal.toIso8601String(),
+      obsController.text,
+    );
+
+    // Agendar notificação usando o ID único do lembrete
+    await NotificationService().agendarNotificacaoEquipamento(
+      id: lembreteId,
+      nomeEquipamento: '${widget.equipamento.nome} - ${obsController.text}',
+      dataHora: dataHoraFinal,
+    );
+
+    // Atualiza a tela imediatamente
+    await _carregarLembretes();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Lembrete agendado com sucesso!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Future<void> _removerLembrete(int lembreteId) async {
+    await DatabaseHelper.instance.deleteLembrete(lembreteId);
+    await NotificationService().cancelarNotificacao(lembreteId);
+    await _carregarLembretes(); // Atualiza a tela na hora
+
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Lembrete removido!')));
+    }
+  }
+
   void _confirmarExclusaoEquipamento() {
     showDialog(
       context: context,
@@ -67,10 +182,8 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
                 );
               }
               if (mounted) {
-                Navigator.of(ctx).pop(); // Fecha o Dialog
-                Navigator.of(context).pop(
-                  true,
-                ); // Volta para a tela anterior notificando a exclusão
+                Navigator.of(ctx).pop();
+                Navigator.of(context).pop(true);
               }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -240,10 +353,13 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
                           'observacao': obsController.text,
                         });
 
+                        // 1. Recarrega os dados do banco
+                        await _carregarCompartimentos();
+
+                        // 2. Fecha o modal
                         if (context.mounted) {
                           Navigator.of(context).pop();
                         }
-                        _carregarCompartimentos();
                       },
                       child: const Text('Salvar Filtro'),
                     ),
@@ -265,6 +381,14 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
           '${widget.equipamento.codigo} - ${widget.equipamento.nome}',
         ),
         actions: [
+          IconButton(
+            icon: Icon(
+              _lembretes.isNotEmpty ? Icons.alarm_on : Icons.add_alarm,
+              color: _lembretes.isNotEmpty ? Colors.amber : null,
+            ),
+            tooltip: 'Agendar Lembrete de Revisão',
+            onPressed: _agendarLembreteRevisao,
+          ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: 'Excluir Equipamento',
@@ -299,6 +423,80 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
               ],
             ),
           ),
+
+          // --- LISTA DE LEMBRETES AGENDADOS ---
+          if (_lembretes.isNotEmpty)
+            Container(
+              constraints: const BoxConstraints(maxHeight: 180),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _lembretes.length,
+                itemBuilder: (context, index) {
+                  final l = _lembretes[index];
+                  final dt = DateTime.parse(l['data_hora']);
+                  final obs = l['observacao'] ?? '';
+
+                  return Card(
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    color: Colors.amber.shade100,
+                    elevation: 1,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.alarm,
+                            color: Colors.amber,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Revisão: ${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} às ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                if (obs.isNotEmpty)
+                                  Text(
+                                    'Obs: $obs',
+                                    style: const TextStyle(
+                                      fontStyle: FontStyle.italic,
+                                      fontSize: 12,
+                                      color: Colors.black87,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.close,
+                              color: Colors.red,
+                              size: 20,
+                            ),
+                            tooltip: 'Remover Lembrete',
+                            onPressed: () => _removerLembrete(l['id']),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+
           Expanded(
             child: _compartimentos.isEmpty
                 ? const Center(

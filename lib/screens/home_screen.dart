@@ -87,6 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   return;
                 }
 
+                // 1. Cria o objeto PRIMEIRO
                 final novo = Equipamento(
                   nome: nomeController.text,
                   codigo: codigoController.text,
@@ -94,8 +95,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       double.tryParse(horometroController.text) ?? 0.0,
                 );
 
-                await DatabaseHelper.instance.insertEquipamento(novo.toMap());
-                Navigator.of(context).pop();
+                // 2. Envia para o banco DEPOIS de ter sido criado
+                await DatabaseHelper.instance.insertEquipamento(novo);
+
+                if (mounted) {
+                  Navigator.of(context).pop();
+                }
                 _carregarEquipamentos();
               },
               child: const Text('Salvar Equipamento'),

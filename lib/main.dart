@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
 import 'theme_notifier.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService().initNotification();
   runApp(const RevCheckApp());
 }
 
@@ -32,6 +36,12 @@ class RevCheckApp extends StatelessWidget {
                 colorSchemeSeed: currentColor,
                 brightness: Brightness.dark,
               ),
+              localizationsDelegates: const [
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              supportedLocales: const [Locale('pt', 'BR')],
               home: const HomeScreen(),
             );
           },

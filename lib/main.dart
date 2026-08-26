@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:timezone/data/latest_all.dart' as tz; // ADICIONE ESTE IMPORT
 
 import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
@@ -7,6 +8,10 @@ import 'theme_notifier.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // INICIALIZA OS FUSOS HORÁRIOS PARA O AGENDAMENTO DE NOTIFICAÇÕES NÃO TRAVAR O APP
+  tz.initializeTimeZones();
+
   await NotificationService().initNotification();
   runApp(const RevCheckApp());
 }

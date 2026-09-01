@@ -20,7 +20,6 @@ android {
     defaultConfig {
         applicationId = "com.example.revchek"
         
-        // Defina explicitamente 21 para garantir compatibilidade com flutter_local_notifications
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         
@@ -30,7 +29,6 @@ android {
 
     buildTypes {
         release {
-            // Sintaxe exata para Kotlin DSL (.kts)
             isMinifyEnabled = false
             isShrinkResources = false
             

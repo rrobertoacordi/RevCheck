@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -21,7 +23,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 2, // Incrementado para recriar/atualizar a estrutura
+      version: 3, // Versão 3 (Lembretes por compartimento)
       onCreate: _createDB,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -33,6 +35,12 @@ class DatabaseHelper {
               observacao TEXT,
               FOREIGN KEY (equipamento_id) REFERENCES equipamentos(id) ON DELETE CASCADE
             )
+          ''');
+        }
+
+        if (oldVersion < 3) {
+          await db.execute('''
+            ALTER TABLE lembretes ADD COLUMN compartimento_id INTEGER
           ''');
         }
       },
@@ -82,9 +90,11 @@ class DatabaseHelper {
       CREATE TABLE lembretes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         equipamento_id INTEGER NOT NULL,
+        compartimento_id INTEGER,
         data_hora TEXT NOT NULL,
         observacao TEXT,
-        FOREIGN KEY (equipamento_id) REFERENCES equipamentos(id) ON DELETE CASCADE
+        FOREIGN KEY (equipamento_id) REFERENCES equipamentos(id) ON DELETE CASCADE,
+        FOREIGN KEY (compartimento_id) REFERENCES compartimentos(id) ON DELETE CASCADE
       )
     ''');
   }
@@ -163,6 +173,21 @@ class DatabaseHelper {
     });
   }
 
+  Future<int> insertLembreteCompartimento({
+    required int equipamentoId,
+    required int compartimentoId,
+    required String dataHora,
+    required String observacao,
+  }) async {
+    final db = await instance.database;
+    return await db.insert('lembretes', {
+      'equipamento_id': equipamentoId,
+      'compartimento_id': compartimentoId,
+      'data_hora': dataHora,
+      'observacao': observacao,
+    });
+  }
+
   Future<List<Map<String, dynamic>>> getLembretesPorEquipamento(
     int equipamentoId,
   ) async {
@@ -175,6 +200,18 @@ class DatabaseHelper {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getLembretesPorCompartimento(
+    int compartimentoId,
+  ) async {
+    final db = await instance.database;
+    return await db.query(
+      'lembretes',
+      where: 'compartimento_id = ?',
+      whereArgs: [compartimentoId],
+      orderBy: 'data_hora ASC',
+    );
+  }
+
   Future<int> deleteLembrete(int id) async {
     final db = await instance.database;
     return await db.delete('lembretes', where: 'id = ?', whereArgs: [id]);
@@ -183,5 +220,66 @@ class DatabaseHelper {
   Future<void> close() async {
     final db = await instance.database;
     db.close();
+  }
+
+  // --- MÉTODOS DE BACKUP E RESTAURAÇÃO ---
+
+  /// Converte todo o banco de dados para uma String JSON
+  Future<String> exportarParaJson() async {
+    final db = await instance.database;
+
+    final equipamentos = await db.query('equipamentos');
+    final compartimentos = await db.query('compartimentos');
+    final trocas = await db.query('trocas_filtro');
+    final lembretes = await db.query('lembretes');
+
+    final backupMap = {
+      'versao': 3,
+      'data_backup': DateTime.now().toIso8601String(),
+      'equipamentos': equipamentos,
+      'compartimentos': compartimentos,
+      'trocas_filtro': trocas,
+      'lembretes': lembretes,
+    };
+
+    return jsonEncode(backupMap);
+  }
+
+  /// Limpa o banco atual e restaura os dados a partir de um JSON
+  Future<void> importarDeJson(String jsonString) async {
+    final db = await instance.database;
+    final Map<String, dynamic> backupMap = jsonDecode(jsonString);
+
+    await db.transaction((txn) async {
+      // 1. Limpa todas as tabelas atuais na ordem das chaves estrangeiras
+      await txn.delete('lembretes');
+      await txn.delete('trocas_filtro');
+      await txn.delete('compartimentos');
+      await txn.delete('equipamentos');
+
+      // 2. Restaura Equipamentos
+      final List equipamentos = backupMap['equipamentos'] ?? [];
+      for (var item in equipamentos) {
+        await txn.insert('equipamentos', Map<String, dynamic>.from(item));
+      }
+
+      // 3. Restaura Compartimentos
+      final List compartimentos = backupMap['compartimentos'] ?? [];
+      for (var item in compartimentos) {
+        await txn.insert('compartimentos', Map<String, dynamic>.from(item));
+      }
+
+      // 4. Restaura Trocas de Filtro
+      final List trocas = backupMap['trocas_filtro'] ?? [];
+      for (var item in trocas) {
+        await txn.insert('trocas_filtro', Map<String, dynamic>.from(item));
+      }
+
+      // 5. Restaura Lembretes
+      final List lembretes = backupMap['lembretes'] ?? [];
+      for (var item in lembretes) {
+        await txn.insert('lembretes', Map<String, dynamic>.from(item));
+      }
+    });
   }
 }

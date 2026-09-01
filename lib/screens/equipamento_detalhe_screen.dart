@@ -16,28 +16,11 @@ class EquipamentoDetalheScreen extends StatefulWidget {
 
 class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
   List<Map<String, dynamic>> _compartimentos = [];
-  List<Map<String, dynamic>> _lembretes = [];
 
   @override
   void initState() {
     super.initState();
-    _carregarDados();
-  }
-
-  Future<void> _carregarDados() async {
-    await _carregarCompartimentos();
-    await _carregarLembretes();
-  }
-
-  Future<void> _carregarLembretes() async {
-    if (widget.equipamento.id == null) return;
-    final lista = await DatabaseHelper.instance.getLembretesPorEquipamento(
-      widget.equipamento.id!,
-    );
-    if (!mounted) return;
-    setState(() {
-      _lembretes = lista;
-    });
+    _carregarCompartimentos();
   }
 
   Future<void> _carregarCompartimentos() async {
@@ -51,10 +34,15 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
       final trocas = await DatabaseHelper.instance.getTrocasPorCompartimento(
         c['id'],
       );
+      // Busca também se já existe lembrete para este compartimento específico
+      final lembretes = await DatabaseHelper.instance
+          .getLembretesPorCompartimento(c['id']);
+
       Map<String, dynamic> item = Map.from(c);
       if (trocas.isNotEmpty) {
         item['ultima_troca'] = trocas.first;
       }
+      item['lembretes'] = lembretes;
       listaCompleta.add(item);
     }
 
@@ -64,8 +52,10 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
     });
   }
 
-  // Agendar múltiplos lembretes
-  Future<void> _agendarLembreteRevisao() async {
+  // AGORA O LEMBRETE É AGENDADO PARA UM COMPARTIMENTO ESPECÍFICO
+  Future<void> _agendarLembreteCompartimento(
+    Map<String, dynamic> compartimento,
+  ) async {
     final DateTime agora = DateTime.now();
 
     final DateTime? dataSelecionada = await showDatePicker(
@@ -73,7 +63,8 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
       initialDate: agora.add(const Duration(days: 1)),
       firstDate: agora,
       lastDate: agora.add(const Duration(days: 365 * 5)),
-      helpText: 'SELECIONE A DATA DA REVISÃO',
+      helpText:
+          'DATA DA REVISÃO - ${compartimento['nome'].toString().toUpperCase()}',
       locale: const Locale('pt', 'BR'),
     );
 
@@ -82,7 +73,7 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
     final TimeOfDay? horaSelecionada = await showTimePicker(
       context: context,
       initialTime: const TimeOfDay(hour: 8, minute: 0),
-      helpText: 'SELECIONE A HORA DO LEMBRETE',
+      helpText: 'HORA DO LEMBRETE',
     );
 
     if (horaSelecionada == null) return;
@@ -91,12 +82,12 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
     final bool? confirmouObs = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Observação do Lembrete'),
+        title: Text('Observação - ${compartimento['nome']}'),
         content: TextField(
           controller: obsController,
           maxLines: 3,
           decoration: const InputDecoration(
-            hintText: 'Ex: Troca de óleo do motor e filtro Donaldson',
+            hintText: 'Ex: Troca de óleo e elemento filtrante',
             border: OutlineInputBorder(),
           ),
         ),
@@ -123,27 +114,31 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
       horaSelecionada.minute,
     );
 
-    // Salva no banco e pega o ID único do lembrete gerado
-    final lembreteId = await DatabaseHelper.instance.insertLembrete(
-      widget.equipamento.id!,
-      dataHoraFinal.toIso8601String(),
-      obsController.text,
-    );
+    // Salva no banco relacionando com o compartimento
+    final lembreteId = await DatabaseHelper.instance
+        .insertLembreteCompartimento(
+          equipamentoId: widget.equipamento.id!,
+          compartimentoId: compartimento['id'],
+          dataHora: dataHoraFinal.toIso8601String(),
+          observacao: obsController.text,
+        );
 
-    // Agendar notificação usando o ID único do lembrete
+    // Notificação exibe o Equipamento + Compartimento
+    final textoNotificacao =
+        '${widget.equipamento.nome} (${compartimento['nome']}): ${obsController.text}';
+
     await NotificationService().agendarNotificacaoEquipamento(
       id: lembreteId,
-      nomeEquipamento: '${widget.equipamento.nome} - ${obsController.text}',
+      nomeEquipamento: textoNotificacao,
       dataHora: dataHoraFinal,
     );
 
-    // Atualiza a tela imediatamente
-    await _carregarLembretes();
+    await _carregarCompartimentos();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Lembrete agendado com sucesso!'),
+        SnackBar(
+          content: Text('Lembrete agendado para ${compartimento['nome']}!'),
           backgroundColor: Colors.green,
         ),
       );
@@ -153,45 +148,12 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
   Future<void> _removerLembrete(int lembreteId) async {
     await DatabaseHelper.instance.deleteLembrete(lembreteId);
     await NotificationService().cancelarNotificacao(lembreteId);
-    await _carregarLembretes(); // Atualiza a tela na hora
+    await _carregarCompartimentos();
 
     if (mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Lembrete removido!')));
     }
-  }
-
-  void _confirmarExclusaoEquipamento() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Excluir Equipamento'),
-        content: Text(
-          'Tem certeza que deseja apagar "${widget.equipamento.nome}"? Todos os filtros e histórico associados serão excluídos permanentemente.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (widget.equipamento.id != null) {
-                await DatabaseHelper.instance.deleteEquipamento(
-                  widget.equipamento.id!,
-                );
-              }
-              if (mounted) {
-                Navigator.of(ctx).pop();
-                Navigator.of(context).pop(true);
-              }
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Excluir'),
-          ),
-        ],
-      ),
-    );
   }
 
   void _modalAdicionarFiltro() {
@@ -353,10 +315,8 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
                           'observacao': obsController.text,
                         });
 
-                        // 1. Recarrega os dados do banco
                         await _carregarCompartimentos();
 
-                        // 2. Fecha o modal
                         if (context.mounted) {
                           Navigator.of(context).pop();
                         }
@@ -380,21 +340,6 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
         title: Text(
           '${widget.equipamento.codigo} - ${widget.equipamento.nome}',
         ),
-        actions: [
-          IconButton(
-            icon: Icon(
-              _lembretes.isNotEmpty ? Icons.alarm_on : Icons.add_alarm,
-              color: _lembretes.isNotEmpty ? Colors.amber : null,
-            ),
-            tooltip: 'Agendar Lembrete de Revisão',
-            onPressed: _agendarLembreteRevisao,
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Excluir Equipamento',
-            onPressed: _confirmarExclusaoEquipamento,
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -423,80 +368,6 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
               ],
             ),
           ),
-
-          // --- LISTA DE LEMBRETES AGENDADOS ---
-          if (_lembretes.isNotEmpty)
-            Container(
-              constraints: const BoxConstraints(maxHeight: 180),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: _lembretes.length,
-                itemBuilder: (context, index) {
-                  final l = _lembretes[index];
-                  final dt = DateTime.parse(l['data_hora']);
-                  final obs = l['observacao'] ?? '';
-
-                  return Card(
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    color: Colors.amber.shade100,
-                    elevation: 1,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.alarm,
-                            color: Colors.amber,
-                            size: 24,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Revisão: ${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} às ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                                if (obs.isNotEmpty)
-                                  Text(
-                                    'Obs: $obs',
-                                    style: const TextStyle(
-                                      fontStyle: FontStyle.italic,
-                                      fontSize: 12,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.close,
-                              color: Colors.red,
-                              size: 20,
-                            ),
-                            tooltip: 'Remover Lembrete',
-                            onPressed: () => _removerLembrete(l['id']),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-
           Expanded(
             child: _compartimentos.isEmpty
                 ? const Center(
@@ -507,58 +378,127 @@ class _EquipamentoDetalheScreenState extends State<EquipamentoDetalheScreen> {
                     itemBuilder: (context, index) {
                       final item = _compartimentos[index];
                       final ultimaTroca = item['ultima_troca'];
+                      final List lembretes = item['lembretes'] ?? [];
 
                       return Card(
                         margin: const EdgeInsets.symmetric(
                           horizontal: 10,
-                          vertical: 5,
+                          vertical: 6,
                         ),
-                        child: ListTile(
-                          title: Text(
-                            item['nome'],
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: ultimaTroca != null
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Filtro: ${ultimaTroca['codigo_filtro']}',
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    item['nome'],
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
                                     ),
-                                    Text(
-                                      'Instalado em: ${ultimaTroca['horas_trocadas']} hrs (${ultimaTroca['data_troca']})',
+                                  ),
+                                  Row(
+                                    children: [
+                                      // Botão de agendar lembrete específico deste filtro
+                                      IconButton(
+                                        icon: Icon(
+                                          lembretes.isNotEmpty
+                                              ? Icons.alarm_on
+                                              : Icons.add_alarm,
+                                          color: lembretes.isNotEmpty
+                                              ? Colors.amber.shade700
+                                              : Colors.grey,
+                                        ),
+                                        tooltip:
+                                            'Agendar Lembrete para este filtro',
+                                        onPressed: () =>
+                                            _agendarLembreteCompartimento(item),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.delete,
+                                          color: Colors.red,
+                                        ),
+                                        onPressed: () async {
+                                          await DatabaseHelper.instance
+                                              .deleteCompartimento(item['id']);
+                                          _carregarCompartimentos();
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const Divider(),
+                              if (ultimaTroca != null) ...[
+                                Text('Filtro: ${ultimaTroca['codigo_filtro']}'),
+                                Text(
+                                  'Instalado em: ${ultimaTroca['horas_trocadas']} hrs (${ultimaTroca['data_troca']})',
+                                ),
+                                if (ultimaTroca['proxima_troca'] != null)
+                                  Text(
+                                    'Próxima Troca: ${ultimaTroca['proxima_troca']} hrs',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary,
                                     ),
-                                    if (ultimaTroca['proxima_troca'] != null)
-                                      Text(
-                                        'Próxima Troca: ${ultimaTroca['proxima_troca']} hrs',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .primary,
+                                  ),
+                              ] else
+                                const Text('Sem registros de troca'),
+
+                              // Se houver lembrete para este compartimento, mostra um mini card
+                              if (lembretes.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                ...lembretes.map((l) {
+                                  final dt = DateTime.parse(l['data_hora']);
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.amber.shade100,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.alarm,
+                                          size: 16,
+                                          color: Colors.amber,
                                         ),
-                                      ),
-                                    if (ultimaTroca['observacao'] != null &&
-                                        ultimaTroca['observacao']
-                                            .toString()
-                                            .isNotEmpty)
-                                      Text(
-                                        'Obs: ${ultimaTroca['observacao']}',
-                                        style: const TextStyle(
-                                          fontStyle: FontStyle.italic,
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            'Lembrete: ${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} às ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.black87,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                  ],
-                                )
-                              : const Text('Sem registros de troca'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () async {
-                              await DatabaseHelper.instance.deleteCompartimento(
-                                item['id'],
-                              );
-                              _carregarCompartimentos();
-                            },
+                                        GestureDetector(
+                                          onTap: () =>
+                                              _removerLembrete(l['id']),
+                                          child: const Icon(
+                                            Icons.close,
+                                            size: 18,
+                                            color: Colors.red,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ],
                           ),
                         ),
                       );

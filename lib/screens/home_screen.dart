@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/equipamento.dart';
 import 'equipamento_detalhe_screen.dart';
+import 'backup_screen.dart'; // Import da tela de Backup
 
 import 'package:revchek/screen_editor.dart';
 
@@ -87,7 +88,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   return;
                 }
 
-                // 1. Cria o objeto PRIMEIRO
                 final novo = Equipamento(
                   nome: nomeController.text,
                   codigo: codigoController.text,
@@ -95,7 +95,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       double.tryParse(horometroController.text) ?? 0.0,
                 );
 
-                // 2. Envia para o banco DEPOIS de ter sido criado
                 await DatabaseHelper.instance.insertEquipamento(novo);
 
                 if (mounted) {
@@ -117,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('RevCheck - Maquinários'),
         actions: [
+          // 1. Botão da Paleta
           IconButton(
             icon: const Icon(Icons.palette),
             onPressed: () {
@@ -126,6 +126,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   builder: (context) => const ConfiguracoesScreen(),
                 ),
               );
+            },
+          ),
+          // 2. Botão de Backup ao lado da Paleta
+          IconButton(
+            icon: const Icon(Icons.backup),
+            tooltip: 'Backup e Restauração',
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const BackupScreen()),
+              );
+              _carregarEquipamentos(); // Atualiza a lista caso restaure um backup
             },
           ),
         ],
@@ -168,6 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
+      // Botão Flutuante exclusivo para adicionar novos equipamentos
       floatingActionButton: FloatingActionButton(
         onPressed: _abrirFormularioModal,
         child: const Icon(Icons.add),
